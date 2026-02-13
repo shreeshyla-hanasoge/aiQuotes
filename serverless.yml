@@ -1,0 +1,51 @@
+service: aiQuotes
+
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  runtime: python3.12
+  architecture: arm64
+  region: us-east-1
+  memorySize: 128
+  timeout: 10
+  environment:
+    DB_HOST: ${env:DB_HOST, '144.24.134.189'}
+    DB_USER: ${env:DB_USER, 'free_application_user'}
+    DB_PASSWORD: ${env:DB_PASSWORD, 'noquotesDevUse1!'}
+    DB_NAME: ${env:DB_NAME, 'aiquotes'}
+    BEDROCK_REGION: us-east-1
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - bedrock:InvokeModel
+          Resource: "*"
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    layer: true
+    slim: true
+    strip: true
+    noDeploy:
+      - boto3
+      - botocore
+      - docutils
+      - jmespath
+      - pip
+      - setuptools
+      - s3transfer
+
+functions:
+  getQuote:
+    handler: handler.get_quote
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+    events:
+      - httpApi:
+          path: /quotes
+          method: post

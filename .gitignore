@@ -1,0 +1,7 @@
+node_modules/
+.serverless/
+.pytest_cache/
+__pycache__/
+*.pyc
+.env
+.DS_Store

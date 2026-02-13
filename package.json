@@ -1,0 +1,9 @@
+{
+  "name": "aiquotes",
+  "version": "1.0.0",
+  "description": "Serverless Inspirational Quotes API",
+  "devDependencies": {
+    "serverless": "^4.32.0",
+    "serverless-python-requirements": "^6.0.0"
+  }
+}
