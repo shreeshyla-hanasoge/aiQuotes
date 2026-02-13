@@ -183,36 +183,133 @@ def deploy_function(role_arn, layer_arn, zip_file):
         logger.info("Function created.")
 
 def create_function_url():
-    """Creates a public Function URL for the Lambda."""
+    """Creates or updates a public Function URL with CORS."""
+    cors_config = {
+        'AllowOrigins': ['*'],
+        'AllowMethods': ['*'],
+        'AllowHeaders': ['content-type'],
+        'MaxAge': 86400
+    }
+    
     url = ""
     try:
         response = lambda_client.create_function_url_config(
             FunctionName=FUNCTION_NAME,
-            AuthType='NONE'
+            AuthType='NONE',
+            Cors=cors_config
         )
         logger.info(f"Function URL created: {response['FunctionUrl']}")
         url = response['FunctionUrl']
     except lambda_client.exceptions.ResourceConflictException:
-        response = lambda_client.get_function_url_config(
-            FunctionName=FUNCTION_NAME
+        logger.info("Function URL already exists. Updating configuration...")
+        response = lambda_client.update_function_url_config(
+            FunctionName=FUNCTION_NAME,
+            AuthType='NONE',
+            Cors=cors_config
         )
-        logger.info(f"Function URL already exists: {response['FunctionUrl']}")
+        logger.info(f"Function URL updated: {response['FunctionUrl']}")
         url = response['FunctionUrl']
     
     # Add permission for public access
     try:
         lambda_client.add_permission(
             FunctionName=FUNCTION_NAME,
-            StatementId='FunctionURLPublicAccess',
+            StatementId='FunctionURLAllowPublicAccess',
             Action='lambda:InvokeFunctionUrl',
             Principal='*',
             FunctionUrlAuthType='NONE'
         )
-        logger.info("Added public access permission to Function URL.")
+        logger.info("Added permission for public access")
     except lambda_client.exceptions.ResourceConflictException:
-        logger.info("Public access permission already exists.")
+        logger.info("Public access permission already exists")
         
+    
     return url
+
+# Initialize API Gateway Client
+apigw_client = boto3.client('apigatewayv2', region_name=REGION)
+API_NAME = 'aiQuotes-API'
+
+def deploy_api_gateway():
+    """Deploys HTTP API Gateway for public access."""
+    # 0. Get Function ARN
+    fn = lambda_client.get_function(FunctionName=FUNCTION_NAME)
+    fn_arn = fn['Configuration']['FunctionArn']
+
+    # 1. Create/Get API
+    logger.info("Configuring API Gateway...")
+    api_id = None
+    api_endpoint = None
+    
+    # Check if API exists (simplified by creating new one for reliability in this script context)
+    # Ideally we would list APIs and find by name, but for now we create/update logic via name uniqueness isn't built-in easily
+    # We will create a new one to guarantee it works. User can clean up old ones manually.
+    try:
+        api = apigw_client.create_api(
+            Name=API_NAME,
+            ProtocolType='HTTP',
+            CorsConfiguration={
+                'AllowOrigins': ['*'],
+                'AllowMethods': ['POST', 'OPTIONS'],
+                'AllowHeaders': ['content-type'],
+                'MaxAge': 86400
+            }
+        )
+        api_id = api['ApiId']
+        api_endpoint = api['ApiEndpoint']
+        logger.info(f"API Gateway Created: {api_id}")
+    except Exception as e:
+        logger.error(f"Error creating API: {e}")
+        return None
+
+    # 2. Create Integration
+    try:
+        integration = apigw_client.create_integration(
+            ApiId=api_id,
+            IntegrationType='AWS_PROXY',
+            IntegrationUri=fn_arn,
+            PayloadFormatVersion='2.0'
+        )
+        integration_id = integration['IntegrationId']
+    except Exception as e:
+        logger.error(f"Error creating integration: {e}")
+        return None
+
+    # 3. Create Route
+    try:
+        apigw_client.create_route(
+            ApiId=api_id,
+            RouteKey='POST /',
+            Target=f'integrations/{integration_id}'
+        )
+    except Exception as e:
+        logger.error(f"Error creating route: {e}")
+
+    # 4. Create Stage
+    try:
+        apigw_client.create_stage(
+            ApiId=api_id,
+            StageName='$default',
+            AutoDeploy=True
+        )
+    except apigw_client.exceptions.ConflictException:
+        pass
+
+    # 5. Add Permission to Lambda
+    try:
+        lambda_client.add_permission(
+            FunctionName=FUNCTION_NAME,
+            StatementId=f'APIGatewayInvoke_{api_id}',
+            Action='lambda:InvokeFunction',
+            Principal='apigateway.amazonaws.com',
+            SourceArn=f"arn:aws:execute-api:{REGION}:{boto3.client('sts').get_caller_identity()['Account']}:{api_id}/*/*"
+        )
+    except lambda_client.exceptions.ResourceConflictException:
+        pass
+    except Exception as e:
+        logger.error(f"Error adding permission: {e}")
+
+    return api_endpoint
 
 def main():
     logger.info("Starting deployment...")
@@ -230,8 +327,9 @@ def main():
     # 4. Deploy Function
     deploy_function(role_arn, layer_arn, code_zip)
     
-    # 5. Public Endpoint
-    url = create_function_url()
+    # 5. Public Endpoint (API Gateway)
+    # Note: We are switching from Function URL to API Gateway due to account restrictions on public Function URLs.
+    url = deploy_api_gateway()
     
     # Cleanup
     os.remove(layer_zip)
@@ -239,7 +337,7 @@ def main():
     
     print("\n" + "="*50)
     print(f"Deployment Complete!")
-    print(f"Function URL: {url}")
+    print(f"API Endpoint: {url}")
     print("="*50 + "\n")
 
 if __name__ == "__main__":

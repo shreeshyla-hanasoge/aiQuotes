@@ -161,6 +161,13 @@ def get_quote(event, context):
         genre = body.get('genre', 'motivation')
         prompt = body.get('prompt')
 
+        headers = {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+        }
+
         if quote_type == 'ai':
             response_data = get_ai_quote(genre, prompt)
         elif quote_type == 'list_models':
@@ -171,14 +178,16 @@ def get_quote(event, context):
         return {
             "statusCode": 200,
             "body": json.dumps(response_data),
-            "headers": {
-                "Content-Type": "application/json"
-            }
+            "headers": headers
         }
 
     except Exception as e:
         logger.error(f"Handler error: {e}")
         return {
             "statusCode": 500,
-            "body": json.dumps({"error": "Internal Server Error", "details": str(e)})
+            "body": json.dumps({"error": "Internal Server Error", "details": str(e)}),
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*"
+            }
         }
